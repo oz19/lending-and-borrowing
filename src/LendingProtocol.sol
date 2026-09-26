@@ -67,6 +67,80 @@ contract LendingProtocol is ReentrancyGuard, Ownable, Pausable {
     event Liquidate(address indexed liquidator, address indexed user, address indexed token, uint256 amount);
     event RatesUpdated(address indexed token, uint256 supplyRate, uint256 borrowRate);
 
+    modifier marketIsActive(address token) {
+        require(markets[token].isActive, "Market is not active");
+        _;
+    }
+
     constructor() Ownable(msg.sender){}
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    function addMarket(
+        address token,
+        uint256 collateralFactor,
+        uint256 initialSupplyRate,
+        uint256 initialBorrowRate
+    ) external onlyOwner {
+        require(token != address(0), "Invalid token address");
+        require(collateralFactor <= BASIS_POINTS, "Invalid collateral factor");
+        require(!markets[token].isActive, "Market already exists");
+
+        markets[token] = Market({
+            token: IERC20(token),
+            totalSupply: 0,
+            totalBorrow: 0,
+            supplyRate: initialSupplyRate,
+            borrowRate: initialBorrowRate,
+            collateralFactor: collateralFactor,
+            isActive: true
+        });
+
+        supportedTokens.push(token);
+        emit MarketAdded(token, collateralFactor);
+    }
+
+    function updateMarket(
+        address token,
+        uint256 newCollateralFactor,
+        uint256 newSupplyRate,
+        uint256 newBorrowRate
+    ) external onlyOwner marketIsActive(token) {
+        require(token != address(0), "Invalid token address");
+        require(collateralFactor <= BASIS_POINTS, "Invalid collateral factor");
+
+        Market storage market = markets[token];
+        market.supplyRate = newSupplyRate;
+        market.borrowRate = newBorrowRate;
+        market.collateralFactor = newCollateralFactor;
+
+        emit MarketUpdated(token, collateralFactor);
+        emit RatesUpdated(token, newSupplyRate, newBorrowRate);
+    }
+
+    function deposit(address token, uint256 amount) external nonReentrant marketIsActive(token) whenNotPaused {
+        require(token != address(0), "Invalid token address");
+        require(amount > 0, "Amount must be greater than zero");
+
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+        userDeposits[msg.sender][token] += amount;
+        
+        User storage user = users[msg.sender];
+        user.totalDeposited += amount;
+        user.lastUpdateTime = block.timestamp;
+        user.isActive = true;
+
+        Market storage market = markets[token];
+        market.totalSupply += amount;
+
+        emit Deposit(msg.sender, token, amount);
+    }
 
 }
