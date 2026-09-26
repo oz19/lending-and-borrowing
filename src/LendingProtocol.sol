@@ -143,4 +143,98 @@ contract LendingProtocol is ReentrancyGuard, Ownable, Pausable {
         emit Deposit(msg.sender, token, amount);
     }
 
+    function withdraw(address token, uint256 amount) external nonReentrant marketIsActive(token) whenNotPaused {
+        require(token != address(0), "Invalid token address");
+        require(amount > 0, "Amount must be greater than zero");
+        require(users[msg.sender].isActive, "User is not active");
+        require(users[msg.sender].totalDeposited >= amount, "Not enough balance");
+        require(canWithdraw(msg.sender, token, amount), "User would make the position unsafe");
+
+        users[msg.sender][token] -= amount;
+
+        User storage user = users[msg.sender];
+        user.totalDeposited -= amount;
+        user.lastUpdateTime = block.timestamp;
+
+        if(user.totalDeposited == 0) {
+            user.isActive = false;
+        }
+
+        Market storage market = markets[token];
+        market.totalSupply -= amount;
+
+        IERC20(token).safeTransfer(msg.sender, amount);
+
+        emit Withdraw(msg.sender, token, amount);
+    }
+
+    /**
+     * @dev Check if a user can withdraw without making position unsafe
+     * @param user The user address
+     * @param token The token to withdraw
+     * @param amount The amount to withdraw
+     * @return True if withdrawal is safe
+     */
+    function canWithdraw(address user, address token, uint256 amount) public view returns (bool) {
+        uint256 currentRatio = getCollateralizationRatio(user);
+        if (currentRatio == type(uint256).max) return true;
+        
+        // Calculate new ratio after withdrawal
+        uint256 newCollateralValue = 0;
+        uint256 totalBorrowValue = 0;
+        
+        for (uint256 i = 0; i < supportedTokens.length; i++) {
+            address supportedToken = supportedTokens[i];
+            if (markets[supportedToken].isActive) {
+                uint256 depositAmount = userDeposits[user][supportedToken];
+                uint256 borrowAmount = userBorrows[user][supportedToken];
+                
+                if (supportedToken == token) {
+                    depositAmount = depositAmount > amount ? depositAmount - amount : 0;
+                }
+                
+                if (depositAmount > 0) {
+                    newCollateralValue += (depositAmount * markets[supportedToken].collateralFactor) / BASIS_POINTS;
+                }
+                
+                if (borrowAmount > 0) {
+                    totalBorrowValue += borrowAmount;
+                }
+            }
+        }
+        
+        if (totalBorrowValue == 0) return true;
+        uint256 newRatio = (newCollateralValue * BASIS_POINTS) / totalBorrowValue;
+        return newRatio >= LIQUIDATION_THRESHOLD;
+    }
+
+    /**
+     * @dev Get user's current collateralization ratio
+     * @param user The user address
+     * @return ratio The collateralization ratio in basis points
+     */
+    function getCollateralizationRatio(address user) public view returns (uint256 ratio) {
+        uint256 totalCollateralValue = 0;
+        uint256 totalBorrowValue = 0;
+        
+        for (uint256 i = 0; i < supportedTokens.length; i++) {
+            address token = supportedTokens[i];
+            if (markets[token].isActive) {
+                uint256 depositAmount = userDeposits[user][token];
+                uint256 borrowAmount = userBorrows[user][token];
+                
+                if (depositAmount > 0) {
+                    totalCollateralValue += (depositAmount * markets[token].collateralFactor) / BASIS_POINTS;
+                }
+                
+                if (borrowAmount > 0) {
+                    totalBorrowValue += borrowAmount;
+                }
+            }
+        }
+        
+        if (totalBorrowValue == 0) return type(uint256).max;
+        return (totalCollateralValue * BASIS_POINTS) / totalBorrowValue;
+    }
+
 }
