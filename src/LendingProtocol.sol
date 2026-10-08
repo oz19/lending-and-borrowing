@@ -237,4 +237,46 @@ contract LendingProtocol is ReentrancyGuard, Ownable, Pausable {
         return (totalCollateralValue * BASIS_POINTS) / totalBorrowValue;
     }
 
+    function borrow(
+        address token,
+        uint256 amount
+    ) external nonReentrant whenNotPaused onlyActiveMarket(token) {
+        require(amount > 0, "Amount must be greater than zero");
+        require(markets[token].totalSupply >= amount, "Insufficient liquidity");
+        require(canBorrow(msg.sender, token, amount), "Borrow would exceed collateral limit");
+
+        userBorrows[msg.sender][token] += amount;
+        users[msg.sender].totalBorrowed += amount;
+        users[msg.sender].lastUpdateTime = block.timestamp;
+        users[msg.sender].isActive = true;
+
+        markets[token].totalBorrow += amount;
+
+        IERC20(token).safeTransfer(msg.sender, amount);
+
+        emit Borrow(msg.sender, token, amount);
+    }
+
+    function repay(
+        address token,
+        uint256 amount
+    ) external nonReentrant whenNotPaused onlyActiveMarket(token) {
+        require(amount > 0, "Amount must be greater than zero");
+        require(userBorrows[msg.sender][token] >= amount, "Insufficient borrow");
+
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+        userBorrows[msg.sender][token] -= amount;
+        users[msg.sender].totalBorrowed -= amount;
+        users[msg.sender].lastUpdateTime = block.timestamp;
+        
+        if (user[msg.sender].totalBorrowed == 0) {
+            users[msg.sender].isActive = false;
+        }
+
+        markets[token].totalBorrow -= amount;
+
+        emit Repay(msg.sender, token, amount);
+    }
+
 }
