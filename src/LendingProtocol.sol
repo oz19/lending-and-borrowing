@@ -279,40 +279,4 @@ contract LendingProtocol is ReentrancyGuard, Ownable, Pausable {
         emit Repay(msg.sender, token, amount);
     }
 
-    function canWithdraw(address user, address token, uint256 amount) public view returns(bool) {
-        uint256 currentRatio = getCollateralizationRatio(user);
-
-        if (currentRatio == type(uint256).max) return true;
-
-        // Calculate new ratio after withdraw
-        uint256 newCollateralValue = 0;
-        uint256 totalBorrowValue = 0;
-
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
-            address supportedToken = supportedTokens[i];
-
-            if (markets[supportedToken].isActive) {
-                uint256 depositAmount = userDeposits[user][supportedToken];
-                uint256 borrowAmount = userBorrows[user][supportedToken];
-
-                if (supportedToken == token) {
-                    depositAmount = depositAmount > amount ? depositAmount - amount : 0;
-                }
-
-                if (depositAmount > 0) {
-                    newCollateralValue += (depositAmount * markets[supportedToken].collateralFactor) / BASIS_POINTS;
-                }
-
-                if (borrowAmount > 0) {
-                    totalBorrowValue += borrowAmount;
-                }
-            }
-        }
-
-        if (totalBorrowValue == 0) return true;
-        
-        uint256 newRatio = (newCollateralValue * BASIS_POINTS) / totalBorrowValue;
-        return newRatio >= LIQUIDATION_THRESHOLD;
-    }
-
 }
