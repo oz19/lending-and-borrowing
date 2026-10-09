@@ -333,4 +333,42 @@ contract LendingProtocol is ReentrancyGuard, Ownable, Pausable {
         return bestToken;
     }
 
+    function depositWithSignature(
+        address token,
+        uint256 amount,
+        SignatureData calldata sigData
+    ) 
+        external 
+        nonReentrant 
+        whenNotPaused 
+        onlyActiveMarket(token) 
+        onlyValidSignature(sigData) 
+    {
+        require(amount > 0, "Amount must be greater than 0");
+        
+        // Verify signature
+        bytes32 messageHash = keccak256(abi.encodePacked(
+            "deposit",
+            token,
+            amount,
+            sigData.nonce,
+            sigData.deadline
+        ));
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        address signer = ethSignedMessageHash.recover(sigData.signature);
+        require(signer == msg.sender, "Invalid signature");
+        require(signer != address(0), "Invalid signature2");
+        
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        
+        userDeposits[msg.sender][token] += amount;
+        users[msg.sender].totalDeposited += amount;
+        users[msg.sender].lastUpdateTime = block.timestamp;
+        users[msg.sender].isActive = true;
+        
+        markets[token].totalSupply += amount;
+        
+        emit Deposit(msg.sender, token, amount);
+    }
+
 }
