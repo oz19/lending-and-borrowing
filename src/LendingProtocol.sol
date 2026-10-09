@@ -279,4 +279,58 @@ contract LendingProtocol is ReentrancyGuard, Ownable, Pausable {
         emit Repay(msg.sender, token, amount);
     }
 
+    function liquidate(address user, address token, uint256 amount) 
+        external 
+        nonReentrant 
+        whenNotPaused 
+        onlyActiveMarket(token) 
+    {
+        require(amount > 0, "Amount must be greater than 0");
+        require(userBorrows[user][token] >= amount, "Insufficient borrow to liquidate");
+        require(isLiquidatable(user), "Position is not liquidatable");
+        
+        uint256 collateralToSeize = (amount * (BASIS_POINTS + LIQUIDATION_PENALTY)) / BASIS_POINTS;
+        
+        address collateralToken = findBestCollateral(user);
+        require(collateralToken != address(0), "No collateral to seize");
+        require(userDeposits[user][collateralToken] >= collateralToSeize, "Insufficient collateral");
+        
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        
+        userBorrows[user][token] -= amount;
+        users[user].totalBorrowed -= amount;
+        markets[token].totalBorrow -= amount;
+        
+        userDeposits[user][collateralToken] -= collateralToSeize;
+        users[user].totalDeposited -= collateralToSeize;
+        markets[collateralToken].totalSupply -= collateralToSeize;
+        
+        IERC20(collateralToken).safeTransfer(msg.sender, collateralToSeize);
+        
+        emit Liquidate(msg.sender, user, token, amount);
+    }
+
+    function isLiquidatable(address user) public view returns (bool) {
+        uint256 ratio = getCollateralizationRatio(user);
+        return ratio < LIQUIDATION_THRESHOLD;
+    }
+
+    function findBestCollateral(address user) internal view returns (address) {
+        address bestToken = address(0);
+        uint256 bestValue = 0;
+        
+        for (uint256 i = 0; i < supportedTokens.length; i++) {
+            address token = supportedTokens[i];
+            if (markets[token].isActive && userDeposits[user][token] > 0) {
+                uint256 value = (userDeposits[user][token] * markets[token].collateralFactor) / BASIS_POINTS;
+                if (value > bestValue) {
+                    bestValue = value;
+                    bestToken = token;
+                }
+            }
+        }
+        
+        return bestToken;
+    }
+
 }
